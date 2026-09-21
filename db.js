@@ -23,6 +23,14 @@ const initDB = async () => {
             content TEXT NOT NULL,
             status VARCHAR(20) DEFAULT 'draft'
         );
+
+        CREATE TABLE IF NOT EXISTS schedules (
+            id SERIAL PRIMARY KEY,
+            variant_id INTEGER REFERENCES variants(id),
+            publish_time TIMESTAMP NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            idempotency_key VARCHAR(255) UNIQUE NOT NULL
+        );
     
     `);
 }

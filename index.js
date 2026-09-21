@@ -72,5 +72,57 @@ app.get('/api/posts', async (_, res) => {
     }
 })
 
+app.patch('/api/variants/:id/status', async (req, res) => {
+    const {status} = req.body;
+    const {id} = req.params;
+
+    const validStatuses = ['draft', 'approved', 'rejected', 'published'];
+
+    if(!validStatuses.includes(status)) return res.status(400).json({ error: "Invalid status. Must be draft, approved, rejected, or published." });
+
+    try {
+        const result = await pool.query(`
+            UPDATE variants SET status = $1 WHERE id = $2 RETURNING *
+        `, [status, id]);
+        
+        if(result.rowCount === 0) return res.status(404).json({ error: "Variant not found" });
+
+        res.json(result.rows[0]);
+
+    } catch (error) {
+        res.status(500).json({ error: "Server Error", message: error.message });
+    }
+})
+
+app.post('/api/schedules', async (req, res) => {
+    const {variantId, publishTime, idempotencyKey} = req.body;
+
+    try {
+        const variantRes = await pool.query(`SELECT status FROM variants WHERE id = $1`, [variantId]);
+        if(variantRes.rowCount === 0) return res.status(404).json({ error: "Variant not found" });
+
+        if (variantRes.rows[0].status !== 'approved') {
+            return res.status(403).json({ 
+                error: "Schedule Rejected", 
+                message: "Only approved variants can be scheduled." 
+            });
+        }
+
+        const result = await pool.query(`
+            INSERT INTO schedules (variant_id, publish_time, idempotency_key) VALUES ($1, $2, $3) 
+            RETURNING *    
+        `, [variantId, publishTime, idempotencyKey]);
+
+        res.status(201).json(result.rows[0]);
+
+
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.status(409).json({ error: "Duplicate schedule request (Idempotency key already used)." });
+        }
+        res.status(500).json({ error: "Server Error", message: error.message });
+    }
+});
+
 app.listen(3000, () => console.log(`Server is running on PORT 3000`)
 );
