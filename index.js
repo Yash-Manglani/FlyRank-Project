@@ -181,7 +181,7 @@ app.post('/api/publish/execute', async (req, res) => {
 
             
             await pool.query(`UPDATE variants SET status = 'published' WHERE id = $1`, [item.variant_id]);
-            // Update schedule status
+            
             await pool.query(`UPDATE schedules SET status = 'completed' WHERE id = $1`, [scheduleId]);
 
         } catch (pubError) {
@@ -201,7 +201,27 @@ app.post('/api/publish/execute', async (req, res) => {
 });
 
 
+app.get('/api/publish/history', async (req, res) => {
+    try {
+        
+        const result = await pool.query(`
+            SELECT ph.id, ph.schedule_id, ph.platform, ph.status, ph.response_payload, ph.attempted_at,
+            s.idempotency_key, v.content as variant_content
+            FROM publish_history ph
+            JOIN schedules s ON ph.schedule_id = s.id
+            JOIN variants v ON s.variant_id = v.id
+            ORDER BY ph.attempted_at DESC
+            
+        `);
 
+        res.json(result.rows);
+
+
+
+    } catch (error) {
+        res.status(500).json({ error: "Server Error", message: error.message });
+    }
+})
 
 
 
