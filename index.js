@@ -1,8 +1,11 @@
 import express from 'express'
+import dotenv from 'dotenv'
 import pool from './db.js'
 import {discordProfile, mockXProfile} from './validators.js'
 import cors from 'cors'
+import getPublisher from './adapters.js'
 
+dotenv.config();
 const app = express();
 app.use(express.json());
 
@@ -47,14 +50,14 @@ app.post('/api/variants/generate', async (req, res) => {
         
     } catch (error) {
         
-        console.error("Full error log:", error); // This will print the actual error in your terminal
+        console.error("Full error log:", error); 
 
         if (error.errors) {
-            // If it's a Zod error, it will have the .errors array
+            
             return res.status(400).json({ error: "Constraint Profile Failed", details: error.errors });
         }
         
-        // If it's a database or server error, it will hit this
+        
         return res.status(500).json({ error: "Server Error", message: error.message });
     }
 })
@@ -71,6 +74,8 @@ app.get('/api/posts', async (_, res) => {
         
     }
 })
+
+
 
 app.patch('/api/variants/:id/status', async (req, res) => {
     const {status} = req.body;
@@ -123,6 +128,90 @@ app.post('/api/schedules', async (req, res) => {
         res.status(500).json({ error: "Server Error", message: error.message });
     }
 });
+
+app.post('/api/publish/execute', async (req, res) => {
+    const { scheduleId } = req.body;
+
+    try {
+        
+        const scheduleRes = await pool.query(`
+            SELECT 
+                s.id as schedule_id, 
+                s.status as schedule_status, 
+                s.idempotency_key,
+                v.id as variant_id, 
+                v.platform, 
+                v.content, 
+                v.status as variant_status
+            FROM schedules s
+            JOIN variants v ON s.variant_id = v.id
+            WHERE s.id = $1
+        `, [scheduleId]);
+
+        if (scheduleRes.rowCount === 0) return res.status(404).json({ error: "Schedule not found" });
+
+        const item = scheduleRes.rows[0];
+
+        
+        const historyCheck = await pool.query(
+            `SELECT * FROM publish_history WHERE schedule_id = $1 AND status = 'success'`,
+            [scheduleId]
+        );
+
+        if (historyCheck.rowCount > 0) {
+            return res.status(200).json({ 
+                message: "Idempotency protection triggered: Variant was already successfully published. Zero duplicate posts made." 
+            });
+        }
+
+        
+        const publisher = getPublisher(item.platform, {
+            discordWebhook: process.env.DISCORD_WEBHOOK_URL,
+        });
+
+        let publishResult;
+        try {
+            publishResult = await publisher.publish(item.content);
+            
+
+            await pool.query(
+                `INSERT INTO publish_history (schedule_id, platform, status, response_payload) VALUES ($1, $2, $3, $4)`,
+                [scheduleId, item.platform, 'success', JSON.stringify(publishResult)]
+            );
+
+            
+            await pool.query(`UPDATE variants SET status = 'published' WHERE id = $1`, [item.variant_id]);
+            // Update schedule status
+            await pool.query(`UPDATE schedules SET status = 'completed' WHERE id = $1`, [scheduleId]);
+
+        } catch (pubError) {
+            
+            await pool.query(
+                `INSERT INTO publish_history (schedule_id, platform, status, response_payload) VALUES ($1, $2, $3, $4)`,
+                [scheduleId, item.platform, 'failed', pubError.message]
+            );
+            return res.status(502).json({ error: "Publish target failed", details: pubError.message });
+        }
+
+        res.status(200).json({ message: "Published successfully!", result: publishResult });
+
+    } catch (error) {
+        res.status(500).json({ error: "Server Error", message: error.message });
+    }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 app.listen(3000, () => console.log(`Server is running on PORT 3000`)
 );

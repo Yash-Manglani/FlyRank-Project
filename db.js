@@ -31,6 +31,15 @@ const initDB = async () => {
             status VARCHAR(20) DEFAULT 'pending',
             idempotency_key VARCHAR(255) UNIQUE NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS publish_history(
+            id SERIAL PRIMARY KEY,
+            schedule_id INTEGER REFERENCES schedules(id),
+            platform VARCHAR(50) NOT NULL,
+            status VARCHAR(20) NOT NULL,
+            response_payload TEXT,
+            attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     
     `);
 }
